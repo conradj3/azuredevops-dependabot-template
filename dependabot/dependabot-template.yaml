@@ -1,0 +1,189 @@
+# File: dependabot/dependabot-template.yml
+
+# Template Parameters
+parameters:
+
+# Node.Js Parameter Configuration
+- name: enableNpm
+  type: boolean
+  default: false
+
+- name: npmDirectory
+  type: string
+  default: '/'
+
+# Docker Parameter Configuration
+- name: enableDocker
+  type: boolean
+  default: false
+
+- name: dockerDirectory
+  type: string
+  default: '/'
+
+# NuGet Parameter Configuration
+- name: enableNuget
+  type: boolean
+  default: false
+
+- name: nugetDirectory
+  type: string
+  default: '/'
+
+# Terraform Parameter Configuration
+- name: enableTerraform
+  type: boolean
+  default: false
+
+- name: terraformDirectory
+  type: string
+  default: '/'
+ 
+ # Pip Parameter Configuration
+- name: enablePip
+  type: boolean
+  default: false
+
+- name: pipDirectory
+  type: string
+  default: '/'
+
+# WorkItem Parameters
+- name: areaPath
+  type: string
+  default: ''
+
+- name: iterationPath
+  type: string
+  default: ''
+
+
+
+# Primary Dependabot Stage.
+stages:
+  - stage: CheckDependencies
+    displayName: 'Check Dependencies'
+    jobs:
+      - job: Dependabot
+        displayName: 'Run Dependabot'
+        pool:
+          vmImage: '$(build-agents)'
+        # Template Variable Dependencies.
+        variables:
+        - group: dependabot # Library Set Dependency storing GitHub Authentication to get by GitHub API limiter.
+        - name: imageToCache
+          value: tingle/dependabot-azure-devops:0.4
+        steps:
+          # Checkout Triggering Repository.
+          - checkout: self
+            fetchDepth: 0
+            clean: true
+            persistCredentials: true
+          # Create a Product Backlog Item to Area / Iteration.
+          - task: CreateWorkItem@1
+            displayName: 'Create Product Backlog Item for Dependabot'
+            inputs:
+              workItemType: 'Product Backlog Item'
+              title: 'Update Dependencies - $(Build.Repository.Name) - $(Build.BuildNumber)'
+              fieldMappings: |
+                Description=Dependabot automated package-ecosystem bumps
+                Tags=dependabot; dependencies
+              areaPath: '${{parameters.areaPath}}'
+              iterationPath: '${{parameters.iterationPath}}'
+              preventDuplicates: true
+              keyFields: |
+                System.AreaPath
+                System.IterationPath
+                System.Title                
+              createOutputs: true
+              outputVariables: |
+                workItemId=ID 
+          # Cache Dependabot image if agents persist and are not immutable.
+          - task: Cache@2
+            inputs:
+              key: docker | "${{ variables.imageToCache }}"
+              path: $(Pipeline.Workspace)/docker
+              cacheHitVar: DOCKER_CACHE_HIT
+            displayName: Cache Docker images
+          # Load Dependabot image cache if it exists.
+          - script: |
+              docker load -i $(Pipeline.Workspace)/docker/cache.tar
+            displayName: Restore Docker image
+            condition: and(not(canceled()), eq(variables.DOCKER_CACHE_HIT, 'true'))
+          # Pull Dependabot image cache and save it to agent runner.
+          - script: |
+              mkdir -p $(Pipeline.Workspace)/docker
+              docker pull -q ${{ variables.imageToCache }}
+              docker save -o $(Pipeline.Workspace)/docker/cache.tar ${{ variables.imageToCache }}              
+            displayName: Save Docker image
+            condition: and(not(canceled()), or(failed(), ne(variables.DOCKER_CACHE_HIT, 'true')))
+          # Dependabot Task for Npm/Yarn (Node.Js) by boolean parameter.
+          - task: dependabot@1
+            displayName: 'Run Dependabot - NPM'
+            inputs:
+              packageManager: 'npm'
+              directory: '${{parameters.npmDirectory}}'
+              targetBranch: 'main'
+              openPullRequestsLimit: 10
+              versioningStrategy: 'auto'
+              milestone: '$(workItemId)'
+              setAutoComplete: true
+              gitHubAccessToken: $(gh-authentication-token)
+              azureDevOpsAccessToken: '$(System.AccessToken)'
+            condition: eq('${{parameters.enableNpm}}', true)
+          # Dependabot Task for Docker triggered by boolean parameter.
+          - task: dependabot@1
+            displayName: 'Run Dependabot - Docker'
+            inputs:
+              packageManager: 'docker'
+              directory: '${{parameters.dockerDirectory}}'
+              targetBranch: 'main'
+              openPullRequestsLimit: 10
+              versioningStrategy: 'auto'
+              milestone: '$(workItemId)'
+              setAutoComplete: true
+              gitHubAccessToken: '$(gh-authentication-token)'
+              azureDevOpsAccessToken: '$(System.AccessToken)'
+            condition: eq('${{parameters.enableDocker}}', true)
+          # Dependabot Task for NuGet triggered by boolean parameter.
+          - task: dependabot@1
+            displayName: 'Run Dependabot - NuGet'
+            inputs:
+              packageManager: 'NuGet'
+              directory: '${{parameters.nugetDirectory}}'
+              targetBranch: 'main'
+              openPullRequestsLimit: 10
+              versioningStrategy: 'auto'
+              milestone: '$(workItemId)'
+              setAutoComplete: true
+              gitHubAccessToken: '$(gh-authentication-token)'
+              azureDevOpsAccessToken: '$(System.AccessToken)'
+            condition: eq('${{parameters.enableNuget}}', true)
+          # Dependabot Task for Terraform triggered by boolean parameter.
+          - task: dependabot@1
+            displayName: 'Run Dependabot - Terraform'
+            inputs:
+              packageManager: 'Terraform'
+              directory: '${{parameters.terraformDirectory}}'
+              targetBranch: 'main'
+              openPullRequestsLimit: 10
+              versioningStrategy: 'auto'
+              milestone: '$(workItemId)'
+              setAutoComplete: true
+              gitHubAccessToken: ''
+              azureDevOpsAccessToken: '$(System.AccessToken)'
+            condition: eq('${{parameters.enableTerraform}}', true)
+          # Dependabot Task for Pip (Python) triggered by boolean parameter.
+          - task: dependabot@1
+            displayName: 'Run Dependabot - Pip'
+            inputs:
+              packageManager: 'Pip'
+              directory: '${{parameters.pipDirectory}}'
+              targetBranch: 'main'
+              openPullRequestsLimit: 10
+              versioningStrategy: 'auto'
+              milestone: '$(workItemId)'
+              setAutoComplete: true
+              gitHubAccessToken: '$(gh-authentication-token)'
+              azureDevOpsAccessToken: '$(System.AccessToken)'
+            condition: eq('${{parameters.enablePip}}', true)
